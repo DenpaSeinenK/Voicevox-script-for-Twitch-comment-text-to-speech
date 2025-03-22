@@ -1,5 +1,6 @@
 const chat = document.getElementById('chat');
 let twitchChannel = localStorage.getItem('twitchChannel') || 'example'; // 初期値としてチャンネル名を設定
+const oauthToken = 'XXXXXXXXXXXXXXXX'; // ここに取得したOAuthトークンを記入
 
 // ユーザ辞書を格納するオブジェクト
 let userDictionary = {};
