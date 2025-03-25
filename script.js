@@ -24,6 +24,37 @@ document.getElementById('themeSelect').addEventListener('change', function () {
     document.body.className = this.value; // 選択されたテーマのクラスをボディに設定
 });
 
+//エモートを識別するコード
+function removeEmotesFromIRCMessage(rawIRCMessage) {
+    const emoteTagMatch = rawIRCMessage.match(/emotes=([^;]*)/);
+    const emoteTag = emoteTagMatch ? emoteTagMatch[1] : null;
+
+    const messageMatch = rawIRCMessage.match(/PRIVMSG [^:]+ :(.*)/);
+    if (!messageMatch) return ''; // メッセージが見つからない場合は空文字を返す
+    let messageText = messageMatch[1];
+
+    if (!emoteTag) return messageText; // エモートなしならそのまま返す
+
+    const emoteRanges = emoteTag
+        .split('/')
+        .flatMap(entry => {
+            const [, positions] = entry.split(':');
+            return positions ? positions.split(',').map(pos => {
+                const [start, end] = pos.split('-').map(Number);
+                return { start, end };
+            }) : [];
+        });
+
+    const emoteIndexes = new Set();
+    emoteRanges.forEach(({ start, end }) => {
+        for (let i = start; i <= end; i++) {
+            emoteIndexes.add(i);
+        }
+    });
+
+    return [...messageText].filter((_, i) => !emoteIndexes.has(i)).join('');
+}
+
 // テーマを適用する関数
 function applyTheme(theme) {
     document.body.classList.toggle('dark', theme === 'dark');
@@ -106,6 +137,9 @@ socket.addEventListener('message', (event) => {
         const message = data.split('PRIVMSG')[1].split(':')[1];
         const username = data.split('!')[0].substring(1);
         displayMessage(username, message);
+
+　　　　// エモートを削除
+       const cleanedMessage = removeEmotesFromIRCMessage(data);
         
        // ユーザ辞書を使ってメッセージを変換
        const transformedMessage = applyUserDictionary(message);
