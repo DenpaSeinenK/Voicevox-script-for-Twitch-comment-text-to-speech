@@ -24,37 +24,6 @@ document.getElementById('themeSelect').addEventListener('change', function () {
     document.body.className = this.value; // 選択されたテーマのクラスをボディに設定
 });
 
-//エモートを識別するコード
-function removeEmotesFromIRCMessage(rawIRCMessage) {
-    const emoteTagMatch = rawIRCMessage.match(/emotes=([^;]*)/);
-    const emoteTag = emoteTagMatch ? emoteTagMatch[1] : null;
-
-    const messageMatch = rawIRCMessage.match(/PRIVMSG [^:]+ :(.*)/);
-    if (!messageMatch) return ''; // メッセージが見つからない場合は空文字を返す
-    let messageText = messageMatch[1];
-
-    if (!emoteTag) return messageText; // エモートなしならそのまま返す
-
-    const emoteRanges = emoteTag
-        .split('/')
-        .flatMap(entry => {
-            const [, positions] = entry.split(':');
-            return positions ? positions.split(',').map(pos => {
-                const [start, end] = pos.split('-').map(Number);
-                return { start, end };
-            }) : [];
-        });
-
-    const emoteIndexes = new Set();
-    emoteRanges.forEach(({ start, end }) => {
-        for (let i = start; i <= end; i++) {
-            emoteIndexes.add(i);
-        }
-    });
-
-    return [...messageText].filter((_, i) => !emoteIndexes.has(i)).join('');
-}
-
 // テーマを適用する関数
 function applyTheme(theme) {
     document.body.classList.toggle('dark', theme === 'dark');
@@ -125,28 +94,85 @@ function connect() {
     // 接続が開かれたときの処理
     socket.addEventListener('open', () => {
         console.log('Connected to Twitch chat');
+        socket.send("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership");//エモート情報を取得する
         socket.send(`PASS oauth:${oauthToken}`);
         socket.send(`NICK justinfan12345`); // 任意のユーザー名で接続
         socket.send(`JOIN #${twitchChannel}`); // 指定したチャンネルに参加
     });
+    socket.addEventListener('message', (event) => {
+        const data = event.data;
+        console.log("Raw IRC Data:", data); // 受信データをログ表示
+    
+        if (data.includes('PRIVMSG')) {
+            // メッセージ部分のみを取得
+            const messageMatch = data.match(/PRIVMSG #[^ ]+ :(.*)/);
+            if (!messageMatch) return;
+    
+            const messageText = messageMatch[1]; // メッセージのテキスト部分のみ取得
+            const usernameMatch = data.match(/display-name=([^;]*)/);
+            const username = usernameMatch ? usernameMatch[1] : "Unknown";
+    
+            // エモートを削除
+            const { modifiedMessage, textForSpeech } = convertEmotesFromIRCMessage(data);
+    
+            // ユーザ辞書を適用
+            let transformedMessage = applyUserDictionary(modifiedMessage);
+    
+            // 正しくメッセージを表示
+            displayMessage(username, transformedMessage);
+    
+            // 音声再生
+            if (isPlaying) queueAudio(textForSpeech);  // 音声用テキストを渡す
+        }
+    });
+// エモートを削除する関数
+function convertEmotesFromIRCMessage(rawIRCMessage) {
+    const emoteTagMatch = rawIRCMessage.match(/emotes=([^;]*)/);
+    const emoteTag = emoteTagMatch ? emoteTagMatch[1] : null;
 
-// メッセージを受信したときの処理
-socket.addEventListener('message', (event) => {
-    const data = event.data;
-    if (data.includes('PRIVMSG')) {
-        const message = data.split('PRIVMSG')[1].split(':')[1];
-        const username = data.split('!')[0].substring(1);
-        displayMessage(username, message);
+    // メッセージ部分の取得
+    const messageMatch = rawIRCMessage.match(/PRIVMSG [^:]+ :(.*)/);
+    if (!messageMatch) return { modifiedMessage: '', textForSpeech: '' }; // メッセージが見つからない場合は空文字を返す
+    let messageText = messageMatch[1];
 
-　　　　// エモートを削除
-       const cleanedMessage = removeEmotesFromIRCMessage(data);
-        
-       // ユーザ辞書を使ってメッセージを変換
-       const transformedMessage = applyUserDictionary(message);
-        
-       if (isPlaying) queueAudio(transformedMessage); // 変換したメッセージを音声再生キューに追加
-   }
-});
+    console.log("Raw message:", messageText); // メッセージ内容のログ出力
+
+    if (!emoteTag) {
+        // エモートがない場合はそのまま返す
+        return { modifiedMessage: messageText, textForSpeech: messageText };
+    }
+
+    // エモート情報を解析
+    const emoteRanges = emoteTag
+        .split('/')
+        .map(entry => {
+            const [id, positions] = entry.split(':');
+            return positions ? positions.split(',').map(pos => {
+                const [start, end] = pos.split('-').map(Number);
+                return { id, start, end };
+            }) : [];
+        })
+        .flat();
+
+    console.log("Emote ranges:", emoteRanges); // エモート範囲のログ出力
+
+    let modifiedMessage = "";
+    let textForSpeech = "";  // 音声用テキスト
+    let lastIndex = 0;
+
+    emoteRanges.forEach(({ id, start, end }) => {
+        modifiedMessage += messageText.slice(lastIndex, start); // エモート前の文字列
+        modifiedMessage += `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${id}/default/dark/1.0" alt="emote" class="emote">`; // エモート画像を挿入
+        textForSpeech += messageText.slice(lastIndex, start);  // 音声用のテキストはそのまま
+        lastIndex = end + 1;
+    });
+
+    modifiedMessage += messageText.slice(lastIndex); // 残りのメッセージを追加
+    textForSpeech += messageText.slice(lastIndex); // 音声用テキストにも追加
+
+    // ここでエモートタグなしのテキストを音声合成に渡す
+    return { modifiedMessage, textForSpeech };
+}
 
  // 接続が切断されたときの処理
  socket.addEventListener('close', (event) => {
@@ -167,17 +193,35 @@ connect();
 
 // ユーザ辞書を使ってメッセージを変換する関数
 function applyUserDictionary(message) {
-   for (const [key, value] of Object.entries(userDictionary)) {
-       const regex = new RegExp(key, 'g'); // 正規表現で全ての出現箇所を置換
-       message = message.replace(regex, value);
-   }
-   return message;
-}
 
+    // エモート部分を一時的に除外するために、<img> タグを一時的に別のタグで囲む
+    const emoteRegex = /<img [^>]*src="([^"]*)"[^>]*>/g;
+    const emotes = [];
+    let match;
+
+    // エモートを一時的に保存し、メッセージから除外
+    message = message.replace(emoteRegex, (match) => {
+        emotes.push(match);
+        return `<!--EMOTE-->${emotes.length - 1}<!--EMOTE-->`;
+    });
+
+    // ユーザー辞書を適用（テキスト部分のみ）
+    for (const [key, value] of Object.entries(userDictionary)) {
+        const regex = new RegExp(key, 'g');
+        message = message.replace(regex, value);
+    }
+
+    // 変換後のメッセージにエモートを戻す
+    message = message.replace(/<!--EMOTE-->(\d+)<!--EMOTE-->/g, (match, index) => {
+        return emotes[index];
+    });
+
+    return message;
+}
 // メッセージを表示する関数
 function displayMessage(username, message) {
     const msgElement = document.createElement('div');
-    msgElement.textContent = `${username}: ${message}`;
+    msgElement.innerHTML = `${username}: ${message}`;
     chat.appendChild(msgElement);
     chat.scrollTop = chat.scrollHeight; // スクロールを最新メッセージに合わせる
 }
