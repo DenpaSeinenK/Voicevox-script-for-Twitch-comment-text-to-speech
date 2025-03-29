@@ -117,12 +117,13 @@ function connect() {
     
             // ユーザ辞書を適用
             let transformedMessage = applyUserDictionary(modifiedMessage);
+            let transformedSpeechText = applyUserDictionary(textForSpeech); // 読み上げ用にも適用
     
             // 正しくメッセージを表示
-            displayMessage(username, transformedMessage);
+            displayMessage(username, modifiedMessage);
     
             // 音声再生
-            if (isPlaying) queueAudio(textForSpeech);  // 音声用テキストを渡す
+            if (isPlaying) queueAudio(transformedSpeechText);  // 音声に変換後のテキストを渡す
         }
     });
 // エモートを削除する関数
